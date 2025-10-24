@@ -203,7 +203,7 @@ impl SlurmExecutor {
             match slurm_runner.next_event().await {
                 Ok(RunnerJobEvent::Starting(metadata)) => {
                     if let Err(e) = scheduler.runner_connected(runner_id, metadata) {
-                        error!("{e:#}");
+                        error!("Failed to connect runner {}: {e:#}", runner_id);
                         break;
                     }
                 }

@@ -8,7 +8,7 @@ use actix_web::http::header::{ContentType, Header, HeaderName, HeaderValue, TryI
 use actix_web::http::StatusCode;
 use actix_web::{web, App, HttpMessage, HttpResponse, HttpServer, ResponseError};
 use log::{debug, error};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tera::Tera;
 
 use crate::config::{ConfigFile, GithubConfig, HttpConfig};
@@ -74,7 +74,7 @@ async fn workflow_job_event(
         action,
         workflow_job:
             WorkflowJob {
-                run_id,
+                run_id: _,
                 job_id,
                 url: workflow_url,
                 name: workflow_name,
@@ -85,7 +85,6 @@ async fn workflow_job_event(
             },
     } = payload;
 
-    debug!("Workflow job {job_id} of run {run_id} ({workflow_name}) is {action:?}");
 
     let runner_name = runner_name
         .as_ref()
@@ -129,7 +128,7 @@ async fn workflow_job_event(
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Serialize)]
 enum GithubEvent {
     WorkflowJob,
     Other,
@@ -159,7 +158,7 @@ impl Header for GithubEvent {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Serialize)]
 struct HubSignature256([u8; 32]);
 
 impl TryIntoHeaderValue for HubSignature256 {
@@ -211,9 +210,15 @@ async fn webhook_event(
     mac.verify_slice(&sig.0 .0)
         .map_err(|_| BadRequest("HMAC mismatch".to_owned()))?;
 
+
     match event.0 {
         GithubEvent::WorkflowJob => {
-            let p = serde_json::from_slice(&payload).map_err(|e| BadRequest(format!("{e:#}")))?;
+            let p = serde_json::from_slice(&payload).map_err(|e| {
+                error!("Failed to parse workflow_job payload: {e:#}");
+                error!("Payload content: {}", String::from_utf8_lossy(&payload));
+                BadRequest(format!("JSON parsing error: {e:#}"))
+            })?;
+
             workflow_job_event(&scheduler, &p).await?;
             Ok(NO_CONTENT)
         }

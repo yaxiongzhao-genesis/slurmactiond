@@ -346,6 +346,7 @@ impl Scheduler {
                     util::increment_or_insert(&mut unassigned_runner_targets, &runner.info.target);
                 }
             }
+
             (pending_job_targets, unassigned_runner_targets)
         });
 
@@ -391,8 +392,6 @@ impl Scheduler {
     ) -> Result<(), Error> {
         let targets = self.match_targets(labels);
         if !targets.is_empty() {
-            debug!("Matched labels {labels:?} of job {job_id} to targets {targets:?}");
-
             let state_changed_at = SystemTime::now();
             self.with_state(|sched| {
                 // like state.try_insert(), but stable
