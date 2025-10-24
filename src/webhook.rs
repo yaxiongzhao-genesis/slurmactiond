@@ -10,6 +10,7 @@ use actix_web::{web, App, HttpMessage, HttpResponse, HttpServer, ResponseError};
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use tera::Tera;
+use url;
 
 use crate::config::{ConfigFile, GithubConfig, HttpConfig};
 use crate::github::{WorkflowJob, WorkflowJobConclusion, WorkflowStatus};
@@ -86,15 +87,18 @@ async fn workflow_job_event(
     } = payload;
 
 
-    let runner_name = runner_name
-        .as_ref()
-        .ok_or_else(|| BadRequest("workflow_job.runner_name missing".to_owned()));
-
     let result = match action {
         WorkflowStatus::Queued => {
+            // Queued events don't have runner_name yet - job hasn't been assigned
             scheduler.job_enqueued(*job_id, workflow_name, workflow_url, job_labels)
         }
-        WorkflowStatus::InProgress => scheduler.job_processing(*job_id, runner_name?.as_str()),
+        WorkflowStatus::InProgress => {
+            // InProgress events should have runner_name
+            let runner_name = runner_name
+                .as_ref()
+                .ok_or_else(|| BadRequest("workflow_job.runner_name missing for in_progress job".to_owned()))?;
+            scheduler.job_processing(*job_id, runner_name.as_str())
+        }
         WorkflowStatus::Completed => {
             let conclusion = conclusion
                 .ok_or_else(|| BadRequest("Missing conclusion to completed job".to_string()))?;
@@ -213,9 +217,21 @@ async fn webhook_event(
 
     match event.0 {
         GithubEvent::WorkflowJob => {
-            let p = serde_json::from_slice(&payload).map_err(|e| {
+            // Handle URL-encoded form data
+            let json_payload = if payload.starts_with(b"payload=") {
+                let url_encoded = String::from_utf8_lossy(&payload);
+                let decoded = url::form_urlencoded::parse(url_encoded.as_bytes())
+                    .find(|(key, _)| key == "payload")
+                    .map(|(_, value)| value.to_string())
+                    .ok_or_else(|| BadRequest("No payload parameter found in URL-encoded data".to_owned()))?;
+                decoded.into_bytes()
+            } else {
+                payload.to_vec()
+            };
+
+            let p = serde_json::from_slice(&json_payload).map_err(|e| {
                 error!("Failed to parse workflow_job payload: {e:#}");
-                error!("Payload content: {}", String::from_utf8_lossy(&payload));
+                error!("Payload content: {}", String::from_utf8_lossy(&json_payload));
                 BadRequest(format!("JSON parsing error: {e:#}"))
             })?;
 
